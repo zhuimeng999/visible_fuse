@@ -1,0 +1,79 @@
+#version 450
+
+layout (constant_id = 0) const int MAX_SOURCE_VIEV_NUM = 10;
+
+layout (binding = 0) uniform UBO
+{
+    mat4 ref_world_pose;
+    mat4 src_world_pose[MAX_SOURCE_VIEV_NUM];
+    mat4 ref_src_pose[MAX_SOURCE_VIEV_NUM];
+    mat4 src_ref_pose[MAX_SOURCE_VIEV_NUM];
+    vec2 ref_size;
+    vec2 dst_size;
+    uint src_num;
+};
+
+layout(binding = 1) buffer buf0 {
+    float depth[];
+};
+
+layout(binding = 2) buffer buf1 {
+    float prob[];
+};
+
+layout(binding = 3) buffer buf2 {
+    uint visible_views[];
+};
+
+layout (binding = 4, rgba8) uniform readonly image2D ref_rgb;
+layout (binding = 5, rg32f) uniform image2D ref_depth_prob;
+layout (binding = 6) uniform sampler2D src_rgbs[MAX_SOURCE_VIEV_NUM];
+layout (binding = 7) uniform sampler2D src_depth_probs[MAX_SOURCE_VIEV_NUM];
+layout (binding = 8, rgba8) uniform image2DArray proj_rgbs;
+layout (binding = 9, rgba32f) uniform image2DArray proj_depth_probs;
+
+void main()
+{
+    uint index = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    ivec2  r_xy = ivec2(gl_WorkGroupID.xy);
+    vec4 r_dp = imageLoad(ref_depth_prob, r_xy);
+
+    vec4 r_pos = vec4((gl_WorkGroupID.xy + 0.5)*r_dp.x, r_dp.x, 1.0f);
+    vec4 rw_pos = ref_world_pose * r_pos;
+
+    if(r_dp.y < 0.3){
+        depth[index] = r_dp.x;
+        prob[index] = 0.0f;
+        visible_views[index] = 0;
+        imageStore(ref_depth_prob, r_xy, vec4(r_dp.x, 0.0f, 0, 1.0f));
+        return;
+    }
+    uint visible_view = 0;
+    int score = 0;
+    for (int j = 0; j < MAX_SOURCE_VIEV_NUM; j++){
+        vec4 rs_pos = ref_src_pose[j]*r_pos;
+        vec2 rs_xy = rs_pos.xy/rs_pos.z;
+        vec4 s_dp = texture(src_depth_probs[j], rs_xy);
+        if ((s_dp.w < 0.5) || (s_dp.y < 0.3)){
+            continue;
+        }
+        vec4 s_pos = vec4(rs_xy*s_dp.x, s_dp.x, 1.0f);
+        vec4 sw_pos = src_world_pose[j] * s_pos;
+        vec4 sr_pos = src_ref_pose[j] * s_pos;
+        if((distance(rw_pos.xyz, sw_pos.xyz) < 1) && ((abs(sr_pos.z - r_dp.x)/r_dp.x) < 0.01)){
+            visible_view |= (1u << j);
+            score++;
+        }
+    }
+    visible_views[index] = visible_view;
+    if(score > 2){
+        depth[index] = r_dp.x;
+        prob[index] = 1.0f;
+        imageStore(ref_depth_prob, r_xy, vec4(r_dp.x, 1.0f, 0, 1.0f));
+    } else {
+        depth[index] = r_dp.x;
+        prob[index] = 0.0f;
+        imageStore(ref_depth_prob, r_xy, vec4(r_dp.x, 0.0f, 0, 1.0f));
+    }
+}
+

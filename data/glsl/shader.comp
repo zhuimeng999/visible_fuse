@@ -1,0 +1,108 @@
+#version 450
+
+layout (constant_id = 0) const int MAX_SOURCE_VIEV_NUM = 10;
+
+layout (binding = 0) uniform UBO
+{
+    mat4 ref_world_pose;
+    mat4 src_world_pose[MAX_SOURCE_VIEV_NUM];
+    mat4 ref_src_pose[MAX_SOURCE_VIEV_NUM];
+    mat4 src_ref_pose[MAX_SOURCE_VIEV_NUM];
+    vec2 ref_size;
+    uint src_num;
+};
+
+layout(binding = 1) buffer buf0 {
+    float depth[];
+};
+
+layout(binding = 2) buffer buf1 {
+    float prob[];
+};
+
+layout(binding = 3) buffer buf2 {
+    uint visible_views[];
+};
+
+layout (binding = 4, rgba8) uniform readonly image2D ref_rgb;
+layout (binding = 5, rg32f) uniform readonly image2D ref_depth_prob;
+layout (binding = 6) uniform sampler2D src_rgbs[MAX_SOURCE_VIEV_NUM];
+layout (binding = 7) uniform sampler2D src_depth_probs[MAX_SOURCE_VIEV_NUM];
+layout (binding = 8, rgba8) uniform image2DArray proj_rgbs;
+layout (binding = 9, rgba32f) uniform image2DArray proj_depth_probs;
+
+vec4 dp_curr[MAX_SOURCE_VIEV_NUM + 1];
+int heap[MAX_SOURCE_VIEV_NUM + 1];
+
+void shell_sort() {
+    int len = MAX_SOURCE_VIEV_NUM + 1;
+    int gap, i, j;
+    int temp;
+    for (gap = len >> 1; gap > 0; gap >>= 1){
+        for (i = gap; i < len; i++) {
+            temp = heap[i];
+            for (j = i - gap; j >= 0 && dp_curr[heap[j]].x > dp_curr[temp].x; j -= gap){
+                heap[j + gap] = heap[j];
+            }
+            heap[j + gap] = temp;
+        }
+    }
+}
+
+void main()
+{
+    uint index = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    for (int i = 0; i < MAX_SOURCE_VIEV_NUM; i++){
+        dp_curr[i] = imageLoad(proj_depth_probs, ivec3(gl_WorkGroupID.xy, i));
+        heap[i] = i;
+    }
+    vec4 r_dp = imageLoad(ref_depth_prob, ivec2(gl_WorkGroupID.xy));
+    dp_curr[MAX_SOURCE_VIEV_NUM] = r_dp;
+    heap[MAX_SOURCE_VIEV_NUM] = MAX_SOURCE_VIEV_NUM;
+    shell_sort();
+    int i, view_id;
+    int visible_view;
+    for (i = 0; i <= MAX_SOURCE_VIEV_NUM; i++){
+        view_id = heap[i];
+        vec4 dp = dp_curr[view_id];
+        if ((dp.w < 0.5) || (dp.y < 0.3)){
+            continue;
+        }
+        vec4 pos = vec4((gl_WorkGroupID.xy + 0.5)*dp.x, dp.x, 1.0f);
+        int occludeds = 0;
+        int violated = 0;
+        for (int j = 0; j < MAX_SOURCE_VIEV_NUM; j++){
+            if (view_id == j){
+                continue;
+            }
+            vec4 ppos = ref_src_pose[j]*pos;
+            vec4 pdp = texture(src_depth_probs[j], ppos.xy/ppos.z);
+            if ((pdp.w < 0.5) || (pdp.y < 0.3)){
+                continue;
+            }
+            if (pdp.x > ppos.z){
+				occludeds++;
+            } else {
+				violated++;
+            }
+        }
+        if(dp.x > dp_curr[MAX_SOURCE_VIEV_NUM].x){
+            occludeds++;
+        } else {
+            violated++;
+        }
+        if (occludeds < violated){
+            visible_view = occludeds + violated;
+            break;
+        }
+    }
+    if (i <= MAX_SOURCE_VIEV_NUM){
+        depth[index] = dp_curr[view_id].x;
+        prob[index] = 1.0f;
+        visible_views[index] = visible_view;
+    } else {
+        depth[index] = 0;
+        prob[index] = 0;
+        visible_views[index] = 0;
+    }
+}

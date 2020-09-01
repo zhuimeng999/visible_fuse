@@ -1,0 +1,49 @@
+#version 450
+
+layout (constant_id = 0) const int MAX_SOURCE_VIEV_NUM = 10;
+
+layout (binding = 0) uniform UBO
+{
+    mat4 ref_world_pose;
+    mat4 src_world_pose[MAX_SOURCE_VIEV_NUM];
+    mat4 ref_src_pose[MAX_SOURCE_VIEV_NUM];
+    mat4 src_ref_pose[MAX_SOURCE_VIEV_NUM];
+    vec2 ref_size;
+    vec2 dst_size;
+    uint src_num;
+};
+
+layout(binding = 1) buffer buf0 {
+    float depth[];
+};
+
+layout(binding = 2) buffer buf1 {
+    float prob[];
+};
+
+layout(binding = 3) buffer buf2 {
+    uint visible_views[];
+};
+
+layout (binding = 4, rgba8) uniform readonly image2D ref_rgb;
+layout (binding = 5, rg32f) uniform image2D ref_depth_prob;
+layout (binding = 6) uniform sampler2D src_rgbs[MAX_SOURCE_VIEV_NUM];
+layout (binding = 7) uniform sampler2D src_depth_probs[MAX_SOURCE_VIEV_NUM];
+layout (binding = 8, rgba8) uniform image2DArray proj_rgbs;
+layout (binding = 9, rgba32f) uniform image2DArray proj_depth_probs;
+
+void main()
+{
+    uint index = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    ivec2  r_xy = ivec2(gl_WorkGroupID.xy);
+    vec4 r_dp = texture(src_depth_probs[0], (r_xy + 0.5)*ref_size/dst_size);
+    if(r_dp.y > 0.999){
+        depth[index] = r_dp.x;
+        prob[index] = 1.0;
+    } else {
+        depth[index] = r_dp.x;
+        prob[index] = 0;
+    }
+
+}
+
