@@ -40,14 +40,3 @@ add_custom_command(
 find_package( OpenCV REQUIRED )
 target_include_directories( ${PROJECT_NAME} SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS} )
 target_link_libraries( ${PROJECT_NAME} ${OpenCV_LIBS})
-
-  include(ExternalProject)
-ExternalProject_Add(glfw3
-  PREFIX 3rdparty
-  GIT_REPOSITORY https://github.com/glfw/glfw.git
-  GIT_TAG 3.3.2
-  CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR> -DCMAKE_CXX_STANDARD=${CMAKE_CXX_STANDARD})
-ExternalProject_Get_Property(glfw3 install_dir)
-include_directories(${install_dir}/include)
-add_dependencies(${PROJECT_NAME}  glfw3)
-target_link_libraries(${PROJECT_NAME}  ${install_dir}/lib/libglfw3.a dl pthread X11)
